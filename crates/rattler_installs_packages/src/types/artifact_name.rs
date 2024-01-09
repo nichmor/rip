@@ -1,4 +1,4 @@
-use super::{NormalizedPackageName, PackageName, ParsePackageNameError};
+use super::{NormalizedPackageName, PackageName, ParsePackageNameError, WheelCoreMetadata};
 use crate::python_env::WheelTag;
 use crate::types::Version;
 use itertools::Itertools;
@@ -250,6 +250,27 @@ impl FromStr for BuildTag {
 }
 
 impl SDistFilename {
+    /// Create a new SDistFilename
+    pub fn new(
+        package_name: String,
+        version: String,
+        format: SDistFormat,
+    ) -> Result<Self, ParseArtifactNameError> {
+        // Parse the package name
+        let distribution = PackageName::from_str(&package_name)
+            .map_err(ParseArtifactNameError::InvalidPackageName)?;
+
+        // Parse the version
+        let version = Version::from_str(&version)
+            .map_err(|e| ParseArtifactNameError::InvalidVersion(e.to_string()))?;
+
+        Ok(SDistFilename {
+            distribution,
+            version,
+            format,
+        })
+    }
+
     /// Parse the sdist name from a filename string
     /// e.g "trio-0.18.0.tar.gz"
     pub fn from_filename(
@@ -293,6 +314,27 @@ impl SDistFilename {
             version,
             format,
         })
+    }
+
+    /// Get extension of SDist
+    pub fn get_extension(path: &str) -> Result<SDistFormat, ParseArtifactNameError> {
+        let (format) = if let Some(_) = path.strip_suffix(".zip") {
+            (SDistFormat::Zip)
+        } else if let Some(_) = path.strip_suffix(".tar.gz") {
+            (SDistFormat::TarGz)
+        } else if let Some(_) = path.strip_suffix(".tar.bz2") {
+            (SDistFormat::TarBz2)
+        } else if let Some(_) = path.strip_suffix(".tar.xz") {
+            (SDistFormat::TarXz)
+        } else if let Some(_) = path.strip_suffix(".tar.Z") {
+            (SDistFormat::TarZ)
+        } else if let Some(_) = path.strip_suffix(".tar") {
+            (SDistFormat::Tar)
+        } else {
+            return Err(ParseArtifactNameError::InvalidExtension(path.to_string()));
+        };
+
+        Ok(format)
     }
 }
 

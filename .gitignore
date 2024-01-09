@@ -2,3 +2,7 @@
 .idea/
 *.sqlite3
 **/__pycache__/**
+.venv/*
+test-data/sdists/sdist_archive/*
+venv/*
+test-data/sdists/*

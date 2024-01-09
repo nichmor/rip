@@ -2,7 +2,10 @@ use crate::artifacts::{SDist, Wheel};
 use crate::index::file_store::FileStore;
 use crate::index::html::{parse_package_names_html, parse_project_info_html};
 use crate::index::http::{CacheMode, Http, HttpRequestError};
-use crate::types::{ArtifactInfo, ProjectInfo, WheelCoreMetadata};
+use crate::types::{
+    ArtifactHashes, ArtifactInfo, ArtifactName, DistInfoMetadata, PackageName, ProjectInfo,
+    SDistFilename, WheelCoreMetadata, Yanked,
+};
 use crate::wheel_builder::WheelBuilder;
 use crate::{
     types::Artifact, types::InnerAsArtifactName, types::NormalizedPackageName, types::Version,
@@ -11,13 +14,21 @@ use crate::{
 use async_http_range_reader::{AsyncHttpRangeReader, CheckSupportMethod};
 use async_recursion::async_recursion;
 use elsa::sync::FrozenMap;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures::{pin_mut, stream, StreamExt};
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue, Method};
 use indexmap::IndexMap;
 use miette::{self, Diagnostic, IntoDiagnostic};
+use rattler_digest::{compute_bytes_digest, compute_file_digest, Sha256};
 use reqwest::{header::CACHE_CONTROL, Client, StatusCode};
+use std::collections::HashMap;
+use std::env;
+use std::fs::File;
 use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{fmt::Display, io::Read, path::Path};
+use tempfile::tempdir;
 use url::Url;
 
 /// Cache of the available packages, artifacts and their metadata.
@@ -56,6 +67,122 @@ impl PackageDb {
     /// Returns the cache directory
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
+    }
+
+    /// compress an sdist to dir
+    /// TODO: refactor into a better place
+    /// TODO: x2 should it even exists?
+    pub fn compress_sdist_dir(&self, sdist_path: &Path, into_archive_path: &Path) -> PathBuf {
+        // compress dir into .tar
+        let full_path = into_archive_path.join("archive_sdist.tar.gz");
+        let full_path_str = full_path.as_path();
+        let tar_gz = File::create(full_path_str).unwrap();
+        let enc = GzEncoder::new(tar_gz, Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        tar.append_dir_all(".", sdist_path).unwrap();
+
+        full_path_str.to_path_buf()
+    }
+
+    /// Get artifact by file URL
+    pub async fn get_file_artifact<'a, 'i, P: Into<NormalizedPackageName>>(
+        &self,
+        p: P,
+        url: Url,
+        wheel_builder: &WheelBuilder<'a, 'i>,
+    ) -> miette::Result<&IndexMap<Version, Vec<ArtifactInfo>>> {
+        let str_name = url.path();
+        let path = Path::new(str_name);
+
+        let normalized_package_name = p.into();
+
+        let (sdist, data) = match path.is_file() {
+            true => {
+                let sdist: SDist =
+                    SDist::from_path(&path, &normalized_package_name.clone()).unwrap();
+                // get directly name and version
+                let data = sdist.read_package_info().unwrap();
+                (sdist, data)
+            }
+            false => {
+                // compress dir into .tar, and work with it as it is a simple sdist
+                // should it even be done?
+                // maybe we can work with dir directly
+                let tmpdir = tempdir().unwrap();
+                let tar_path = self.compress_sdist_dir(path, tmpdir.path());
+                let sdist: SDist =
+                    SDist::from_path(&tar_path, &normalized_package_name.clone()).unwrap();
+
+                let data = wheel_builder.get_sdist_metadata(&sdist).await.unwrap();
+                (sdist, data)
+            }
+        };
+
+        let (bytes, metadata) = data;
+
+        let sdist_file_name = sdist.name();
+
+        let filename = ArtifactName::SDist(sdist_file_name.clone());
+
+        let requires_python = metadata.requires_python;
+
+        let dist_info_metadata = DistInfoMetadata {
+            available: false,
+            hashes: ArtifactHashes::default(),
+        };
+
+        let yanked = Yanked {
+            yanked: false,
+            reason: None,
+        };
+
+        let project_hash = ArtifactHashes {
+            sha256: Some(compute_bytes_digest::<Sha256>(url.as_str().as_bytes())),
+        };
+
+        // let's try to build an artifact info :)
+        let artifact_info = ArtifactInfo {
+            filename,
+            url: url.clone(),
+            hashes: Some(project_hash),
+            requires_python,
+            dist_info_metadata,
+            yanked,
+        };
+
+        let mut result: IndexMap<Version, Vec<ArtifactInfo>> = Default::default();
+        // let url_entry =
+        result
+            .entry(artifact_info.filename.version().clone())
+            .or_default()
+            .push(artifact_info.clone());
+
+        self.put_metadata_in_cache(&artifact_info, &bytes).await?;
+
+        Ok(self
+            .artifacts
+            .insert(normalized_package_name.clone(), Box::new(result)))
+    }
+
+    /// Get artifact directly from file, vcs, or url
+    pub async fn get_artifact_by_url<'a, 'i, P: Into<NormalizedPackageName>>(
+        &self,
+        p: P,
+        url: Url,
+        wheel_builder: &WheelBuilder<'a, 'i>,
+    ) -> miette::Result<&IndexMap<Version, Vec<ArtifactInfo>>> {
+        //conver to str
+        let p = p.into();
+
+        if let Some(cached) = self.artifacts.get(&p) {
+            Ok(cached)
+        } else {
+            if url.scheme() == "file" {
+                self.get_file_artifact(p, url, wheel_builder).await
+            } else {
+                unimplemented!("it's not implemented yet");
+            }
+        }
     }
 
     /// Downloads and caches information about available artifiacts of a package from the index.

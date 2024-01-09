@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::str::FromStr;
+use std::{env, fs};
 
 // include static build_frontend.py string
 const BUILD_FRONTEND_PY: &str = include_str!("./wheel_builder_frontend.py");
@@ -138,6 +139,10 @@ impl<'db> BuildEnvironment<'db> {
     /// Run a command in the build environment
     pub(crate) fn run_command(&self, stage: &str) -> std::io::Result<Output> {
         // three args: cache.folder, goal
+        if !self.package_dir.exists() {
+            fs::create_dir(&self.package_dir)?;
+        }
+
         Command::new(self.venv.python_executable())
             .current_dir(&self.package_dir)
             .arg(self.work_dir.path().join("build_frontend.py"))

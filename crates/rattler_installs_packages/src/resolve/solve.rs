@@ -1,13 +1,14 @@
-use super::dependency_provider::PypiPackageName;
+use super::dependency_provider::{PypiPackageName, PypiVersionSet};
 use crate::index::PackageDb;
 use crate::python_env::{PythonLocation, WheelTags};
 use crate::resolve::dependency_provider::{PypiDependencyProvider, PypiVersion};
 use crate::types::PackageName;
 use crate::{types::ArtifactInfo, types::Extra, types::NormalizedPackageName, types::Version};
-use pep508_rs::{MarkerEnvironment, Requirement};
-use resolvo::{DefaultSolvableDisplay, Solver};
+use pep508_rs::{MarkerEnvironment, Requirement, VersionOrUrl};
+use resolvo::{DefaultSolvableDisplay, Pool, Solver};
 use std::collections::HashMap;
 use std::str::FromStr;
+use url::Url;
 
 use std::collections::HashSet;
 
@@ -170,19 +171,13 @@ pub async fn resolve<'db>(
     options: &ResolveOptions,
     python_location: PythonLocation,
 ) -> miette::Result<Vec<PinnedPackage<'db>>> {
-    // Construct a provider
-    let provider = PypiDependencyProvider::new(
-        package_db,
-        env_markers,
-        compatible_tags,
-        locked_packages,
-        favored_packages,
-        options,
-        python_location,
-    )?;
-    let pool = &provider.pool;
+    //construct a pool
+    let pool: Pool<PypiVersionSet, PypiPackageName> = Pool::new();
 
     let requirements = requirements.into_iter();
+
+    // let construct hashmap
+    let mut name_to_url: HashMap<NormalizedPackageName, Url> = Default::default();
 
     // Construct the root requirements from the requirements requested by the user.
     let requirement_count = requirements.size_hint();
@@ -196,11 +191,15 @@ pub async fn resolve<'db>(
     } in requirements
     {
         let name = PackageName::from_str(name).expect("invalid package name");
-        let dependency_package_name =
-            pool.intern_package_name(PypiPackageName::Base(name.clone().into()));
+        let pypi_name = PypiPackageName::Base(name.clone().into());
+        let dependency_package_name = pool.intern_package_name(pypi_name.clone());
         let version_set_id =
             pool.intern_version_set(dependency_package_name, version_or_url.clone().into());
         root_requirements.push(version_set_id);
+
+        if let Some(VersionOrUrl::Url(url)) = version_or_url {
+            name_to_url.insert(pypi_name.base().clone(), url.clone());
+        }
 
         for extra in extras.iter().flatten() {
             let extra: Extra = extra.parse().expect("invalid extra");
@@ -211,6 +210,19 @@ pub async fn resolve<'db>(
             root_requirements.push(version_set_id);
         }
     }
+
+    // Construct a provider
+    let provider = PypiDependencyProvider::new(
+        pool,
+        package_db,
+        env_markers,
+        compatible_tags,
+        name_to_url,
+        locked_packages,
+        favored_packages,
+        options,
+        python_location,
+    )?;
 
     // Invoke the solver to get a solution to the requirements
     let mut solver = Solver::new(&provider);
@@ -231,9 +243,16 @@ pub async fn resolve<'db>(
         let pool = solver.pool();
         let solvable = pool.resolve_solvable(solvable_id);
         let name = pool.resolve_package_name(solvable.name_id());
-        let PypiVersion::Version(version) = solvable.inner() else {
-            unreachable!("urls are not yet supported")
+        let version = match solvable.inner() {
+            PypiVersion::Version(version) => version,
+            PypiVersion::Url(_) => {
+                let artifacts = provider.cached_artifacts.get(&solvable_id).unwrap();
+                let artifact = artifacts[0];
+
+                artifact.filename.version()
+            }
         };
+
 
         // Get the entry in the result
         let entry = result

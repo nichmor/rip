@@ -6,7 +6,8 @@ use miette::IntoDiagnostic;
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
 use std::ffi::OsStr;
-use std::io::{ErrorKind, Read, Seek};
+use std::fs::{read_dir, File};
+use std::io::{Error, ErrorKind, Read, Seek};
 use std::path::{Path, PathBuf};
 use tar::Archive;
 
@@ -54,10 +55,41 @@ impl SDist {
             .file_name()
             .and_then(OsStr::to_str)
             .ok_or_else(|| miette::miette!("path does not contain a filename"))?;
-        let name =
-            SDistFilename::from_filename(file_name, normalized_package_name).into_diagnostic()?;
         let bytes = std::fs::File::open(path).into_diagnostic()?;
-        Self::new(name, Box::new(bytes))
+        let name =
+            SDistFilename::from_filename(file_name, normalized_package_name).into_diagnostic();
+        if let Ok(name) = name {
+            Self::new(name, Box::new(bytes))
+        } else {
+            // we cannot create fast from filename
+            // rely on project metadata
+            Self::from_metadata(file_name, normalized_package_name, bytes)
+        }
+    }
+
+    /// Create SDist directly from archive metadata
+    pub fn from_metadata(
+        file_name: &str,
+        normalized_package_name: &NormalizedPackageName,
+        bytes: File,
+    ) -> miette::Result<Self> {
+        // create a dummy_sdist_name
+        let dummy_sdist_name = SDistFilename::new(
+            normalized_package_name.clone().to_string(),
+            String::from("0.0.0"),
+            SDistFilename::get_extension(file_name).into_diagnostic()?,
+        )
+        .into_diagnostic()?;
+        let mut dummy_sdist = Self::new(dummy_sdist_name, Box::new(bytes))?;
+        // read package info
+        let (_, metadata) = dummy_sdist.read_package_info().into_diagnostic()?;
+        // map correct values here
+        let original_name = metadata.name;
+        let original_version = metadata.version;
+        dummy_sdist.name.distribution = original_name;
+        dummy_sdist.name.version = original_version;
+
+        Ok(dummy_sdist)
     }
 
     /// Find entry in tar archive

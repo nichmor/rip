@@ -1,4 +1,5 @@
 use super::SDistResolution;
+use crate::artifacts;
 use crate::artifacts::SDist;
 use crate::artifacts::Wheel;
 use crate::index::PackageDb;
@@ -46,10 +47,12 @@ impl Display for PypiVersionSet {
 
 /// This is a wrapper around [`Version`] that serves a version
 /// within the [`PypiVersionSet`] version set.
-#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub(crate) enum PypiVersion {
+    /// A Version
     Version(Version),
     #[allow(dead_code)]
+    /// A url
     Url(Url),
 }
 
@@ -77,7 +80,7 @@ impl Display for PypiVersion {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 /// This can either be a base package name or with an extra
 /// this is used to support optional dependencies
 pub(crate) enum PypiPackageName {
@@ -123,6 +126,7 @@ pub(crate) struct PypiDependencyProvider<'db, 'i> {
     compatible_tags: Option<&'i WheelTags>,
 
     pub cached_artifacts: FrozenMap<SolvableId, Vec<&'db ArtifactInfo>>,
+    name_to_url: HashMap<NormalizedPackageName, Url>,
 
     favored_packages: HashMap<NormalizedPackageName, PinnedPackage<'db>>,
     locked_packages: HashMap<NormalizedPackageName, PinnedPackage<'db>>,
@@ -134,9 +138,11 @@ impl<'db, 'i> PypiDependencyProvider<'db, 'i> {
     /// Creates a new PypiDependencyProvider
     /// for use with the [`resolvo`] crate
     pub fn new(
+        pool: Pool<PypiVersionSet, PypiPackageName>,
         package_db: &'db PackageDb,
         markers: &'i MarkerEnvironment,
         compatible_tags: Option<&'i WheelTags>,
+        name_to_url: HashMap<NormalizedPackageName, Url>,
         locked_packages: HashMap<NormalizedPackageName, PinnedPackage<'db>>,
         favored_packages: HashMap<NormalizedPackageName, PinnedPackage<'db>>,
         options: &'i ResolveOptions,
@@ -152,12 +158,13 @@ impl<'db, 'i> PypiDependencyProvider<'db, 'i> {
         );
 
         Ok(Self {
-            pool: Pool::new(),
+            pool,
             package_db,
             wheel_builder,
             markers,
             compatible_tags,
             cached_artifacts: Default::default(),
+            name_to_url,
             favored_packages,
             locked_packages,
             options,
@@ -349,13 +356,36 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
         let package_name = self.pool.resolve_package_name(name);
         tracing::info!("collecting {}", package_name);
 
-        // Get all the metadata for this package
-        let result = task::block_in_place(move || {
-            Handle::current().block_on(
-                self.package_db
-                    .available_artifacts(package_name.base().clone()),
-            )
-        });
+        // check if we have URL variant for this name
+        let url_version = self.name_to_url.get(package_name.base());
+
+
+        let result = match url_version {
+            Some(url) => {
+                let result = task::block_in_place(move || {
+                    Handle::current().block_on(self.package_db.get_artifact_by_url(
+                        package_name.base().clone(),
+                        url.clone(),
+                        &self.wheel_builder,
+                    ))
+                });
+                result
+            }
+            None => {
+                // Get all the metadata for this package
+                let result: Result<
+                    &indexmap::IndexMap<Version, Vec<ArtifactInfo>>,
+                    miette::ErrReport,
+                > = task::block_in_place(move || {
+                    Handle::current().block_on(
+                        self.package_db
+                            .available_artifacts(package_name.base().clone()),
+                    )
+                });
+                result
+            }
+        };
+
         let artifacts = match result {
             Ok(artifacts) => artifacts,
             Err(err) => {
@@ -365,22 +395,26 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
                 return None;
             }
         };
+
         let mut candidates = Candidates::default();
         let locked_package = self.locked_packages.get(package_name.base());
         let favored_package = self.favored_packages.get(package_name.base());
         for (version, artifacts) in artifacts.iter() {
             // Skip this version if a locked or favored version exists for this version. It will be
             // added below.
-            if locked_package.map(|p| &p.version) == Some(version)
+            if locked_package.map(|p: &PinnedPackage<'_>| &p.version) == Some(version)
                 || favored_package.map(|p| &p.version) == Some(version)
             {
                 continue;
             }
 
+            let original_version = match self.name_to_url.get(package_name.base()) {
+                Some(version) => PypiVersion::Url(version.clone()),
+                None => PypiVersion::Version(version.clone()),
+            };
+
             // Add the solvable
-            let solvable_id = self
-                .pool
-                .intern_solvable(name, PypiVersion::Version(version.clone()));
+            let solvable_id = self.pool.intern_solvable(name, original_version);
             candidates.candidates.push(solvable_id);
 
             // Determine the candidates
@@ -424,9 +458,7 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
     fn get_dependencies(&self, solvable_id: SolvableId) -> Dependencies {
         let solvable = self.pool.resolve_solvable(solvable_id);
         let package_name = self.pool.resolve_package_name(solvable.name_id());
-        let PypiVersion::Version(package_version) = solvable.inner() else {
-            unimplemented!("cannot get dependencies of wheels by url yet")
-        };
+        let package_version = solvable.inner();
 
         tracing::info!(
             "obtaining dependency information from {}={}",
@@ -443,16 +475,29 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
                 .pool
                 .lookup_package_name(&PypiPackageName::Base(package_name.clone()))
                 .expect("base package not found while resolving extra");
-            let specifiers = VersionSpecifiers::from_iter([VersionSpecifier::new(
-                Operator::ExactEqual,
-                package_version.clone(),
-                false,
-            )
-            .expect("failed to construct equality version specifier")]);
-            let version_set_id = self.pool.intern_version_set(
-                base_name_id,
-                Some(VersionOrUrl::VersionSpecifier(specifiers)).into(),
-            );
+            let version_set_id = match package_version {
+                PypiVersion::Version(version) => {
+                    let specifiers = VersionSpecifiers::from_iter([VersionSpecifier::new(
+                        Operator::ExactEqual,
+                        version.clone(),
+                        false,
+                    )
+                    .expect("failed to construct equality version specifier")]);
+                    let version_set_id = self.pool.intern_version_set(
+                        base_name_id,
+                        Some(VersionOrUrl::VersionSpecifier(specifiers)).into(),
+                    );
+                    version_set_id
+                }
+                PypiVersion::Url(url_version) => {
+                    let version_set_id = self.pool.intern_version_set(
+                        base_name_id,
+                        Some(VersionOrUrl::Url(url_version.clone())).into(),
+                    );
+                    version_set_id
+                }
+            };
+
             dependencies.requirements.push(version_set_id);
         }
 
@@ -489,16 +534,30 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
                 let extra_name_id = self
                     .pool
                     .intern_package_name(PypiPackageName::Extra(package_name.clone(), extra));
-                let specifiers = VersionSpecifiers::from_iter([VersionSpecifier::new(
-                    Operator::ExactEqual,
-                    package_version.clone(),
-                    false,
-                )
-                .expect("failed to construct equality version specifier")]);
-                let version_set_id = self.pool.intern_version_set(
-                    extra_name_id,
-                    Some(VersionOrUrl::VersionSpecifier(specifiers)).into(),
-                );
+
+                let version_set_id = match package_version {
+                    PypiVersion::Version(version) => {
+                        let specifiers = VersionSpecifiers::from_iter([VersionSpecifier::new(
+                            Operator::ExactEqual,
+                            version.clone(),
+                            false,
+                        )
+                        .expect("failed to construct equality version specifier")]);
+                        let version_set_id = self.pool.intern_version_set(
+                            extra_name_id,
+                            Some(VersionOrUrl::VersionSpecifier(specifiers)).into(),
+                        );
+                        version_set_id
+                    }
+                    PypiVersion::Url(url_version) => {
+                        let version_set_id = self.pool.intern_version_set(
+                            extra_name_id,
+                            Some(VersionOrUrl::Url(url_version.clone())).into(),
+                        );
+                        version_set_id
+                    }
+                };
+
                 dependencies.constrains.push(version_set_id);
             }
         }
