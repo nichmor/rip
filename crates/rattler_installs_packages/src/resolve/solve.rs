@@ -253,16 +253,6 @@ pub async fn resolve<'db>(
             }
         };
 
-        // let PypiVersion::Version(version) = solvable.inner() else {
-        //     println!("IM NOT SUPPORTED YET but I will try to get version");
-
-        //     let artifacts = provider.cached_artifacts.get(&solvable_id).unwrap();
-        //     let artifact = artifacts[0];
-
-        //     PypiVersion::Version(artifact.filename.version())
-
-        //     // unreachable!("urls are not yet supported")
-        // };
 
         // Get the entry in the result
         let entry = result

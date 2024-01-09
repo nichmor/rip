@@ -59,7 +59,6 @@ impl SDist {
         let name =
             SDistFilename::from_filename(file_name, normalized_package_name).into_diagnostic();
         if let Ok(name) = name {
-            println!("GOT FROM FILENAME");
             Self::new(name, Box::new(bytes))
         } else {
             // we cannot create fast from filename

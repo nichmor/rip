@@ -110,7 +110,6 @@ impl PackageDb {
                 // maybe we can work with dir directly
                 let tmpdir = tempdir().unwrap();
                 let tar_path = self.compress_sdist_dir(path, tmpdir.path());
-                println!("TAR PATH EXISTS ? {:?}", tar_path.exists());
                 let sdist: SDist =
                     SDist::from_path(&tar_path, &normalized_package_name.clone()).unwrap();
 

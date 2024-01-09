@@ -358,10 +358,7 @@ impl<'p> DependencyProvider<PypiVersionSet, PypiPackageName>
 
         // check if we have URL variant for this name
         let url_version = self.name_to_url.get(package_name.base());
-        println!(
-            "Should collect package name and version {:?} {:?}",
-            package_name, url_version
-        );
+
 
         let result = match url_version {
             Some(url) => {
