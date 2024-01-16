@@ -161,7 +161,7 @@ impl VEnv {
 
         #[cfg(windows)]
         {
-            Self::setup_python(&abs_exe_path, &base_python_path)?;
+            Self::setup_python(&abs_exe_path, &base_python_path, base_python_version)?;
         }
 
         Ok(VEnv::new(venv_abs_dir.to_path_buf(), install_paths))
@@ -245,7 +245,7 @@ prompt = {}"#,
     pub fn setup_python(
         venv_exe_path: &Path,
         original_python_exe: &Path,
-        #[cfg(not(windows))] python_version: PythonInterpreterVersion,
+        python_version: PythonInterpreterVersion,
     ) -> std::io::Result<()> {
         if !venv_exe_path.exists() {
             copy_file(original_python_exe, venv_exe_path)?;
