@@ -293,9 +293,21 @@ prompt = {}"#,
                 let original_python_bin = original_python_bin_dir.join("Lib/venv/scripts/nt").join(bin_name);
 
                 if original_python_bin.exists() {
+
+
+                    // edge case for when used python is built from source code
+                    // if basename.endswith('_d'):
+                    //     ext = '_d' + ext
+                    //     basename = basename[:-2]
+                    // if basename == 'python':
+                    //     basename = 'venvlauncher'
+                    // elif basename == 'pythonw':
+                    //     basename = 'venvwlauncher'
+
+
                     let venv_python_bin = venv_bin.join(bin_name);
                     if !venv_python_bin.exists() {
-                        copy_file(venv_exe_path, &venv_python_bin)?;
+                        copy_file(original_python_bin, &venv_python_bin)?;
                     }
                 }
             }
