@@ -125,7 +125,7 @@ jobs:
       - name: Run pixi test
         if: ${{ !matrix.skip-tests }}
         shell: bash
-        run: >
+        run: |
           cargo install pixi
           mkdir pixi
           cd pixi
