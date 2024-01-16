@@ -132,3 +132,5 @@ jobs:
           pixi init
           pixi add python
           pwd
+          cd ../
+          cargo run -- rich --only-sdists -p /d/a/rip/rip/pixi/.pixi/env/bin/python 
