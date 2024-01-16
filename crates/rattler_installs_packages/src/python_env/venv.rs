@@ -161,7 +161,7 @@ impl VEnv {
 
         #[cfg(windows)]
         {
-            Self::setup_python(&abs_exe_path, &base_python_path, base_python_version)?;
+            Self::setup_python(&abs_exe_path, &base_python_path)?;
         }
 
         Ok(VEnv::new(venv_abs_dir.to_path_buf(), install_paths))
