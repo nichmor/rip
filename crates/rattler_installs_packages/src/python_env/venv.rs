@@ -205,7 +205,7 @@ impl VEnv {
     pub fn create_pyvenv(
         venv_path: &Path,
         python_path: &Path,
-        python_version: PythonInterpreterVersion,
+        #[cfg(not(windows))] python_version: PythonInterpreterVersion,
     ) -> std::io::Result<()> {
         let venv_name = venv_path
             .file_name()
