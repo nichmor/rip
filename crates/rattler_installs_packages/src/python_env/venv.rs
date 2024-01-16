@@ -247,16 +247,16 @@ prompt = {}"#,
         original_python_exe: &Path,
         python_version: PythonInterpreterVersion,
     ) -> std::io::Result<()> {
-        if !venv_exe_path.exists() {
-            copy_file(original_python_exe, venv_exe_path)?;
-        }
-
         let venv_bin = venv_exe_path
             .parent()
             .expect("venv exe binary should have parent folder");
 
         #[cfg(not(windows))]
         {
+            if !venv_exe_path.exists() {
+                copy_file(original_python_exe, venv_exe_path)?;
+            }
+
             let python_bins = [
                 "python",
                 "python3",
@@ -281,11 +281,6 @@ prompt = {}"#,
                 "python_d.exe",
                 "pythonw.exe",
                 "pythonw_d.exe",
-                "python3.dll",
-                "VCRUNTIME140.dll",
-                "vcruntime140.dll",
-                "vcruntime140_1.dll",
-                &format!("python{}{}.dll", python_version.major, python_version.minor).to_string(),
                 base_exe_name
                     .to_str()
                     .expect("cannot convert windows venv exe name"),
@@ -295,7 +290,7 @@ prompt = {}"#,
                 .parent()
                 .expect("cannot get system python parent folder");
             for bin_name in python_bins.into_iter() {
-                let original_python_bin = original_python_bin_dir.join(bin_name);
+                let original_python_bin = original_python_bin_dir.join("Lib/venv/scripts/nt").join(bin_name);
 
                 if original_python_bin.exists() {
                     let venv_python_bin = venv_bin.join(bin_name);
