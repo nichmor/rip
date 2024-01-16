@@ -282,6 +282,9 @@ prompt = {}"#,
                 "pythonw.exe",
                 "pythonw_d.exe",
                 "python3.dll",
+                "VCRUNTIME140.dll",
+                "vcruntime140.dll",
+                "vcruntime140_1.dll",
                 &format!("python{}{}.dll", python_version.major, python_version.minor).to_string(),
                 base_exe_name
                     .to_str()
