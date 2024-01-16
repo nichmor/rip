@@ -296,7 +296,7 @@ prompt = {}"#,
 
                 if original_python_bin.exists() && !venv_python_bin.exists(){
                     if original_python_scripts.exists() {
-                        copy_file(original_python_bin, &venv_python_bin)?;
+                        copy_file(original_python_scripts, &venv_python_bin)?;
                     } else {
                         // edge case for when used python is built from source code
                         // or we use venv from build
@@ -310,7 +310,7 @@ prompt = {}"#,
                         }
                         let original_launcher_bin = original_python_bin_dir.join(launcher_bin_name);
                         if original_launcher_bin.exists() {
-                            copy_file(original_python_bin, &venv_python_bin)?;
+                            copy_file(original_launcher_bin, &venv_python_bin)?;
                         }
                     }
                     
