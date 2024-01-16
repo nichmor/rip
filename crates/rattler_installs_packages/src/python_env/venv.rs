@@ -205,7 +205,7 @@ impl VEnv {
     pub fn create_pyvenv(
         venv_path: &Path,
         python_path: &Path,
-        #[cfg(not(windows))] python_version: PythonInterpreterVersion,
+        python_version: PythonInterpreterVersion,
     ) -> std::io::Result<()> {
         let venv_name = venv_path
             .file_name()
@@ -245,7 +245,7 @@ prompt = {}"#,
     pub fn setup_python(
         venv_exe_path: &Path,
         original_python_exe: &Path,
-        python_version: PythonInterpreterVersion,
+        #[cfg(not(windows))] python_version: PythonInterpreterVersion,
     ) -> std::io::Result<()> {
         let venv_bin = venv_exe_path
             .parent()
