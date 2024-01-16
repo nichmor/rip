@@ -8,7 +8,6 @@ use crate::wheel_builder::{build_requirements, WheelBuildError, WheelBuilder};
 use fs_err as fs;
 use pep508_rs::{MarkerEnvironment, Requirement};
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
