@@ -291,10 +291,12 @@ prompt = {}"#,
                 .expect("cannot get system python parent folder");
             for bin_name in python_bins.into_iter() {
                 let original_python_bin = original_python_bin_dir.join(bin_name);
-                let original_python_scripts = original_python_bin_dir.join("Lib/venv/scripts/nt").join(bin_name);
+                let original_python_scripts = original_python_bin_dir
+                    .join("Lib/venv/scripts/nt")
+                    .join(bin_name);
                 let venv_python_bin = venv_bin.join(bin_name);
 
-                if original_python_bin.exists() && !venv_python_bin.exists(){
+                if original_python_bin.exists() && !venv_python_bin.exists() {
                     if original_python_scripts.exists() {
                         copy_file(original_python_scripts, &venv_python_bin)?;
                     } else {
@@ -302,18 +304,17 @@ prompt = {}"#,
                         // or we use venv from build
                         // let mut base_name = bin_name;
                         let mut launcher_bin_name = bin_name.to_owned();
-                        
+
                         if bin_name.contains("python") {
                             launcher_bin_name = bin_name.replace("python", "venvlauncher");
                         } else if bin_name.contains("pythonw") {
-                            launcher_bin_name = "venvwlauncher".to_owned();
+                            launcher_bin_name = bin_name.replace("pythonw", "venvwlauncher");
                         }
                         let original_launcher_bin = original_python_bin_dir.join(launcher_bin_name);
                         if original_launcher_bin.exists() {
                             copy_file(original_launcher_bin, &venv_python_bin)?;
                         }
                     }
-                    
                 }
             }
         }
